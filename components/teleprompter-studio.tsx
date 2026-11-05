@@ -167,6 +167,7 @@ export default function TeleprompterStudio() {
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [recordedMimeType, setRecordedMimeType] = useState("");
   const [cameraError, setCameraError] = useState("");
+  const [cameraAspectRatio, setCameraAspectRatio] = useState<number | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
@@ -291,84 +292,92 @@ export default function TeleprompterStudio() {
     };
   }, [recording]);
 
-  const openCamera = async () => {
-    setCameraError("");
+  const requestCamera = async (requestedOrientation: VideoOrientation) => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraError("Camera access requires a secure connection (HTTPS) and a supported browser.");
-      return;
+      throw new Error("Camera access requires a secure connection (HTTPS) and a supported browser.");
     }
+
+    let media: MediaStream;
     try {
-      setCameraReady(false);
-      setCanvasReady(false);
-      canvasHasFrameRef.current = false;
-      let media: MediaStream;
-      try {
-        media = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: getOrientationConstraints(orientation, true),
-        });
-      } catch (error) {
-        const name = error instanceof DOMException ? error.name : "";
-        if (name !== "OverconstrainedError" && name !== "ConstraintNotSatisfiedError") {
-          throw error;
-        }
-        media = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: getOrientationConstraints(orientation),
-        });
-      }
-      const settings = media.getVideoTracks()[0]?.getSettings();
-      const actualAspectRatio = settings?.aspectRatio ??
-        (settings?.width && settings?.height ? settings.width / settings.height : null);
-      if (actualAspectRatio && Math.abs(actualAspectRatio - (orientation === "portrait" ? 9 / 16 : 16 / 9)) > 0.12) {
-        setCameraError(
-          `Your camera is providing a ${actualAspectRatio.toFixed(2)}:1 feed. The full camera image is shown without zoom or a fake background, but the device may not support ${orientation} framing in this browser.`,
-        );
-      }
-      setStream(media);
+      media = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: getOrientationConstraints(requestedOrientation, true),
+      });
     } catch (error) {
       const name = error instanceof DOMException ? error.name : "";
+      if (name !== "OverconstrainedError" && name !== "ConstraintNotSatisfiedError") {
+        throw error;
+      }
+      media = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: getOrientationConstraints(requestedOrientation),
+      });
+    }
+
+    const settings = media.getVideoTracks()[0]?.getSettings();
+    const actualAspectRatio = settings?.aspectRatio ??
+      (settings?.width && settings?.height ? settings.width / settings.height : null);
+    return { media, actualAspectRatio };
+  };
+
+  const handleCameraError = (error: unknown) => {
+      const name = error instanceof DOMException ? error.name : "";
       setCameraError(
+        name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError"
+          ? "This camera cannot provide the requested orientation. Try landscape or use a different camera app/browser."
+          :
         name === "NotAllowedError"
           ? "Camera and microphone access was blocked. Allow access in your browser settings and try again."
           : name === "NotFoundError"
             ? "No camera or microphone was found on this device."
             : "We couldn't start your camera. Check that it's not being used by another app.",
       );
+  };
+
+  const setCameraAspectWarning = (aspectRatio: number | null, requestedOrientation: VideoOrientation) => {
+    if (aspectRatio && Math.abs(aspectRatio - (requestedOrientation === "portrait" ? 9 / 16 : 16 / 9)) > 0.12) {
+      setCameraError(
+        `Your camera returned a ${aspectRatio.toFixed(2)}:1 video. The preview and saved recording will keep this original framing; this device or browser did not provide the requested ${requestedOrientation} orientation.`,
+      );
+    }
+  };
+
+  const openCamera = async () => {
+    setCameraError("");
+    setCameraReady(false);
+    setCanvasReady(false);
+    canvasHasFrameRef.current = false;
+    try {
+      const result = await requestCamera(orientation);
+      setCameraAspectRatio(result.actualAspectRatio);
+      setCameraAspectWarning(result.actualAspectRatio, orientation);
+      setStream(result.media);
+    } catch (error) {
+      handleCameraError(error);
     }
   };
 
   const selectOrientation = async (nextOrientation: VideoOrientation) => {
+    if (nextOrientation === orientation) return;
     setOrientation(nextOrientation);
     setCameraError("");
-    scrollPositionRef.current = 0;
+    setCameraAspectRatio(null);
     setCanvasReady(false);
+    setCameraReady(false);
     canvasHasFrameRef.current = false;
+    scrollPositionRef.current = 0;
 
-    const track = stream?.getVideoTracks()[0];
-    if (!track) return;
-
+    const previousStream = stream;
+    setStream(null);
+    previousStream?.getTracks().forEach((track) => track.stop());
+    if (!previousStream) return;
     try {
-      try {
-        await track.applyConstraints(getOrientationConstraints(nextOrientation, true));
-      } catch (error) {
-        const name = error instanceof DOMException ? error.name : "";
-        if (name !== "OverconstrainedError" && name !== "ConstraintNotSatisfiedError") {
-          throw error;
-        }
-        await track.applyConstraints(getOrientationConstraints(nextOrientation));
-      }
-      const settings = track.getSettings();
-      const actualAspectRatio = settings.aspectRatio ??
-        (settings.width && settings.height ? settings.width / settings.height : null);
-      const targetAspectRatio = nextOrientation === "portrait" ? 9 / 16 : 16 / 9;
-      if (actualAspectRatio && Math.abs(actualAspectRatio - targetAspectRatio) > 0.12) {
-        setCameraError(
-          `Your camera is providing a ${actualAspectRatio.toFixed(2)}:1 feed. The full camera image is shown without zoom or a fake background.`,
-        );
-      }
-    } catch {
-      setCameraError(`Your camera couldn't switch to ${nextOrientation} framing. The full original camera image is kept without zoom.`);
+      const result = await requestCamera(nextOrientation);
+      setCameraAspectRatio(result.actualAspectRatio);
+      setCameraAspectWarning(result.actualAspectRatio, nextOrientation);
+      setStream(result.media);
+    } catch (error) {
+      handleCameraError(error);
     }
   };
 
@@ -491,6 +500,10 @@ export default function TeleprompterStudio() {
       setScriptActionMessage("Clipboard access was blocked. Allow clipboard permission or paste directly into the text box.");
     }
   };
+
+  const previewOrientation = cameraAspectRatio
+    ? cameraAspectRatio < 1 ? "portrait" : "landscape"
+    : orientation;
 
   return (
     <div className="studio-shell">
@@ -671,7 +684,8 @@ export default function TeleprompterStudio() {
 
             <div
               ref={stageRef}
-              className={`camera-stage orientation-${orientation}${fullscreenFallback ? " fallback-fullscreen" : ""}`}
+              className={`camera-stage orientation-${previewOrientation}${fullscreenFallback ? " fallback-fullscreen" : ""}`}
+              style={cameraAspectRatio ? { aspectRatio: cameraAspectRatio } : undefined}
             >
               <video
                 ref={videoRef}
@@ -680,7 +694,13 @@ export default function TeleprompterStudio() {
                 playsInline
                 className={`camera-live-video${mirror ? " mirrored" : ""}`}
                 aria-hidden="true"
-                onLoadedMetadata={() => setCameraReady(true)}
+                onLoadedMetadata={(event) => {
+                  const video = event.currentTarget;
+                  setCameraReady(true);
+                  if (video.videoWidth && video.videoHeight) {
+                    setCameraAspectRatio(video.videoWidth / video.videoHeight);
+                  }
+                }}
               />
               {!recordedUrl && (
                 <canvas
