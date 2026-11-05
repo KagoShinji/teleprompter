@@ -169,6 +169,7 @@ export default function TeleprompterStudio() {
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [cameraError, setCameraError] = useState("");
   const [saveMessage, setSaveMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const [cameraAspectRatio, setCameraAspectRatio] = useState<number | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -440,34 +441,41 @@ export default function TeleprompterStudio() {
   };
 
   const saveRecording = async () => {
-    if (!recordedUrl || !recordedBlob) return;
+    if (!recordedUrl || !recordedBlob || isSaving) return;
     setCameraError("");
     setSaveMessage("");
-    const extension = recordedMimeType.includes("mp4") ? "mp4" : "webm";
-    const filename = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
-    const file = new File([recordedBlob], filename, {
-      type: recordedMimeType || recordedBlob.type || "video/webm",
-    });
+    setIsSaving(true);
+    try {
+      const extension = recordedMimeType.includes("mp4") ? "mp4" : "webm";
+      const filename = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
+      const file = new File([recordedBlob], filename, {
+        type: recordedMimeType || recordedBlob.type || "video/webm",
+      });
+      const canShareFile = navigator.canShare
+        ? navigator.canShare({ files: [file] })
+        : true;
 
-    if (navigator.share && navigator.canShare?.({ files: [file] })) {
-      try {
+      if (navigator.share && canShareFile) {
         await navigator.share({ files: [file], title: filename });
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setCameraError("The video could not be shared. Please try saving it again.");
+        setSaveMessage("Video shared. Choose Save to Photos or Save Video in the share sheet to add it to your camera roll.");
+        return;
       }
-      return;
-    }
 
-    const link = document.createElement("a");
-    link.href = recordedUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setSaveMessage(
-      "This browser cannot save directly to your camera roll. The video was downloaded; open it from Downloads or Files and choose Save to Photos.",
-    );
+      const link = document.createElement("a");
+      link.href = recordedUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setSaveMessage(
+        "Download started. Open the video from Files or Downloads and choose Save to Photos to add it to your camera roll.",
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setSaveMessage("The video could not be saved or shared. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const toggleFullscreen = async () => {
@@ -796,8 +804,8 @@ export default function TeleprompterStudio() {
                       </Button>
                     </>
                   ) : recordedUrl ? (
-                    <Button size="sm" className="h-10" onClick={saveRecording}>
-                      <ArrowDownToLine size={15} /> Save video
+                    <Button size="sm" className="h-10" onClick={saveRecording} disabled={isSaving}>
+                      <ArrowDownToLine size={15} /> {isSaving ? "Preparing…" : "Save video"}
                     </Button>
                   ) : stream ? (
                     <Button
@@ -860,8 +868,8 @@ export default function TeleprompterStudio() {
                     }}>
                       <RotateCcw size={15} /> Retake
                     </Button>
-                    <Button className="flex-1 sm:flex-none" onClick={saveRecording}>
-                      <ArrowDownToLine size={16} /> Save video
+                    <Button className="flex-1 sm:flex-none" onClick={saveRecording} disabled={isSaving}>
+                      <ArrowDownToLine size={16} /> {isSaving ? "Preparing…" : "Save video"}
                     </Button>
                   </>
                 ) : stream ? (
@@ -978,6 +986,11 @@ export default function TeleprompterStudio() {
       </main>
       {!isFullscreen && (
         <div className="mobile-recording-dock" role="group" aria-label="Mobile recording controls">
+          {saveMessage && (
+            <p role="status" className="mobile-save-status">
+              {saveMessage}
+            </p>
+          )}
           <div className="mobile-dock-status">
             {recording ? (
               <>
@@ -1036,8 +1049,8 @@ export default function TeleprompterStudio() {
                 >
                   <RotateCcw size={15} /> Retake
                 </Button>
-                <Button type="button" className="min-h-12 flex-1" onClick={saveRecording}>
-                  <ArrowDownToLine size={16} /> Save video
+                <Button type="button" className="min-h-12 flex-1" onClick={saveRecording} disabled={isSaving}>
+                  <ArrowDownToLine size={16} /> {isSaving ? "Preparing…" : "Save video"}
                 </Button>
               </>
             ) : stream ? (
