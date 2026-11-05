@@ -448,17 +448,21 @@ export default function TeleprompterStudio() {
     try {
       const extension = recordedMimeType.includes("mp4") ? "mp4" : "webm";
       const filename = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
+      const fileType = (recordedMimeType || recordedBlob.type || "video/webm").split(";")[0];
       const file = new File([recordedBlob], filename, {
-        type: recordedMimeType || recordedBlob.type || "video/webm",
+        type: fileType,
       });
-      const canShareFile = navigator.canShare
-        ? navigator.canShare({ files: [file] })
-        : true;
 
-      if (navigator.share && canShareFile) {
-        await navigator.share({ files: [file], title: filename });
-        setSaveMessage("Video shared. Choose Save to Photos or Save Video in the share sheet to add it to your camera roll.");
-        return;
+      if (navigator.share) {
+        try {
+          if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: filename });
+            setSaveMessage("Video shared. Choose Save to Photos or Save Video in the share sheet to add it to your camera roll.");
+            return;
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+        }
       }
 
       const link = document.createElement("a");
@@ -468,11 +472,11 @@ export default function TeleprompterStudio() {
       link.click();
       link.remove();
       setSaveMessage(
-        "Download started. Open the video from Files or Downloads and choose Save to Photos to add it to your camera roll.",
+        "The share sheet was unavailable, so the video download was started. Open it from Downloads and choose Save to Photos to add it to your camera roll.",
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      setSaveMessage("The video could not be saved or shared. Please try again.");
+      setSaveMessage("The video could not be downloaded. Please try again or use the browser's download controls.");
     } finally {
       setIsSaving(false);
     }
