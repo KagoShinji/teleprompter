@@ -391,7 +391,13 @@ export default function TeleprompterStudio() {
       setCameraError("Video recording is not supported in this browser. Try a recent version of Chrome, Safari, or Firefox.");
       return;
     }
-    const mimeType = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/mp4"]
+    const mimeType = [
+      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4;codecs=avc1.42E01E",
+      "video/mp4",
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+    ]
       .find((type) => MediaRecorder.isTypeSupported(type));
     try {
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -446,9 +452,12 @@ export default function TeleprompterStudio() {
     setSaveMessage("");
     setIsSaving(true);
     try {
-      const extension = recordedMimeType.includes("mp4") ? "mp4" : "webm";
+      const actualMimeType = recordedBlob.type || recordedMimeType || "video/webm";
+      const isMp4 = actualMimeType.includes("mp4");
+      const extension = isMp4 ? "mp4" : "webm";
+      const formatLabel = isMp4 ? "MP4" : "WebM";
       const filename = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
-      const fileType = (recordedMimeType || recordedBlob.type || "video/webm").split(";")[0];
+      const fileType = actualMimeType.split(";")[0];
       const file = new File([recordedBlob], filename, {
         type: fileType,
       });
@@ -457,7 +466,9 @@ export default function TeleprompterStudio() {
         try {
           if (!navigator.canShare || navigator.canShare({ files: [file] })) {
             await navigator.share({ files: [file], title: filename });
-            setSaveMessage("Video shared. Choose Save to Photos or Save Video in the share sheet to add it to your camera roll.");
+            setSaveMessage(
+              `Shared as ${formatLabel}. Android only lists apps that accept this file; if Gallery isn't listed, this browser can't save directly to it.`,
+            );
             return;
           }
         } catch (error) {
@@ -472,7 +483,7 @@ export default function TeleprompterStudio() {
       link.click();
       link.remove();
       setSaveMessage(
-        "The share sheet was unavailable, so the video download was started. Open it from Downloads and choose Save to Photos to add it to your camera roll.",
+        `The share sheet was unavailable, so the ${formatLabel} download was started. Open it from Downloads and use an available app to import or move it to your gallery.`,
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
