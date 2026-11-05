@@ -119,61 +119,6 @@ button {
   box-shadow: 0 8px 26px rgb(34 35 31 / 3%);
 }
 
-.teleprompter-window {
-  position: relative;
-  height: 208px;
-  overflow: hidden;
-  border-radius: 15px;
-  background: #f4f5f1;
-}
-
-.teleprompter-window::before,
-.teleprompter-window::after {
-  position: absolute;
-  z-index: 2;
-  right: 0;
-  left: 0;
-  height: 36px;
-  content: "";
-  pointer-events: none;
-}
-
-.teleprompter-window::before {
-  top: 0;
-  background: linear-gradient(#f4f5f1, transparent);
-}
-
-.teleprompter-window::after {
-  bottom: 0;
-  background: linear-gradient(transparent, #f4f5f1);
-}
-
-.script-input {
-  display: block;
-  width: 100%;
-  height: 100%;
-  resize: none;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #464941;
-  line-height: 1.65;
-}
-
-.script-read {
-  width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  color: #383b35;
-  line-height: 1.65;
-  scrollbar-width: none;
-}
-
-.script-read::-webkit-scrollbar {
-  display: none;
-}
-
 .camera-stage {
   position: relative;
   display: grid;
@@ -188,6 +133,7 @@ button {
   color: #fff;
 }
 
+.camera-stage canvas,
 .camera-stage video {
   position: absolute;
   inset: 0;
@@ -196,8 +142,32 @@ button {
   object-fit: cover;
 }
 
-.camera-stage video.mirrored {
-  transform: scaleX(-1);
+.camera-stage .camera-source {
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.camera-stage .camera-composite {
+  pointer-events: none;
+}
+
+.camera-stage .recorded-video {
+  z-index: 1;
+}
+
+.camera-stage:fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.camera-stage:fullscreen canvas,
+.camera-stage:fullscreen video {
+  object-fit: contain;
 }
 
 .recording-pulse {
@@ -229,17 +199,14 @@ input[type="range"] {
   }
 
   .camera-stage {
-    aspect-ratio: 4 / 3;
-  }
-
-  .teleprompter-window {
-    height: 178px;
+    aspect-ratio: 9 / 16;
+    max-height: 72dvh;
   }
 }
 
 @media (max-width: 420px) {
   .camera-stage {
-    min-height: 240px;
+    min-height: 220px;
   }
 
   .studio-header .header-secondary {
