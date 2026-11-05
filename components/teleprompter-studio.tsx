@@ -68,6 +68,21 @@ function wrapScript(context: CanvasRenderingContext2D, script: string, width: nu
 
 type VideoOrientation = "portrait" | "landscape";
 
+function getOrientationConstraints(
+  orientation: VideoOrientation,
+  requireAspectRatio = false,
+): MediaTrackConstraints {
+  const portrait = orientation === "portrait";
+  const aspectRatio = portrait ? 9 / 16 : 16 / 9;
+  return {
+    facingMode: { ideal: "user" },
+    width: { ideal: portrait ? 720 : 1280 },
+    height: { ideal: portrait ? 1280 : 720 },
+    aspectRatio: requireAspectRatio ? { exact: aspectRatio } : { ideal: aspectRatio },
+    frameRate: { ideal: 30, max: 30 },
+  };
+}
+
 function drawCameraFrame(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
@@ -75,12 +90,9 @@ function drawCameraFrame(
   height: number,
   mirror: boolean,
 ) {
-  const coverScale = Math.max(width / video.videoWidth, height / video.videoHeight);
-  const coverWidth = video.videoWidth * coverScale;
-  const coverHeight = video.videoHeight * coverScale;
-  const fitScale = Math.min(width / video.videoWidth, height / video.videoHeight);
-  const fitWidth = video.videoWidth * fitScale;
-  const fitHeight = video.videoHeight * fitScale;
+  const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
+  const drawWidth = video.videoWidth * scale;
+  const drawHeight = video.videoHeight * scale;
   context.save();
   if (mirror) {
     context.translate(width, 0);
@@ -89,16 +101,7 @@ function drawCameraFrame(
 
   context.fillStyle = "#171a17";
   context.fillRect(0, 0, width, height);
-  context.drawImage(
-    video,
-    (width - coverWidth) / 2,
-    (height - coverHeight) / 2,
-    coverWidth,
-    coverHeight,
-  );
-  context.fillStyle = "rgba(17, 20, 17, 0.58)";
-  context.fillRect(0, 0, width, height);
-  context.drawImage(video, (width - fitWidth) / 2, (height - fitHeight) / 2, fitWidth, fitHeight);
+  context.drawImage(video, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
   context.restore();
 }
 
@@ -300,15 +303,30 @@ export default function TeleprompterStudio() {
       setCameraReady(false);
       setCanvasReady(false);
       canvasHasFrameRef.current = false;
-      const media = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: {
-          facingMode: { ideal: "user" },
-          width: { ideal: orientation === "portrait" ? 720 : 1280 },
-          height: { ideal: orientation === "portrait" ? 1280 : 720 },
-          frameRate: { ideal: 30, max: 30 },
-        },
-      });
+      let media: MediaStream;
+      try {
+        media = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: getOrientationConstraints(orientation, true),
+        });
+      } catch (error) {
+        const name = error instanceof DOMException ? error.name : "";
+        if (name !== "OverconstrainedError" && name !== "ConstraintNotSatisfiedError") {
+          throw error;
+        }
+        media = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: getOrientationConstraints(orientation),
+        });
+      }
+      const settings = media.getVideoTracks()[0]?.getSettings();
+      const actualAspectRatio = settings?.aspectRatio ??
+        (settings?.width && settings?.height ? settings.width / settings.height : null);
+      if (actualAspectRatio && Math.abs(actualAspectRatio - (orientation === "portrait" ? 9 / 16 : 16 / 9)) > 0.12) {
+        setCameraError(
+          `Your camera is providing a ${actualAspectRatio.toFixed(2)}:1 feed. The full camera image is shown without zoom or a fake background, but the device may not support ${orientation} framing in this browser.`,
+        );
+      }
       setStream(media);
     } catch (error) {
       const name = error instanceof DOMException ? error.name : "";
@@ -319,6 +337,40 @@ export default function TeleprompterStudio() {
             ? "No camera or microphone was found on this device."
             : "We couldn't start your camera. Check that it's not being used by another app.",
       );
+    }
+  };
+
+  const selectOrientation = async (nextOrientation: VideoOrientation) => {
+    setOrientation(nextOrientation);
+    setCameraError("");
+    scrollPositionRef.current = 0;
+    setCanvasReady(false);
+    canvasHasFrameRef.current = false;
+
+    const track = stream?.getVideoTracks()[0];
+    if (!track) return;
+
+    try {
+      try {
+        await track.applyConstraints(getOrientationConstraints(nextOrientation, true));
+      } catch (error) {
+        const name = error instanceof DOMException ? error.name : "";
+        if (name !== "OverconstrainedError" && name !== "ConstraintNotSatisfiedError") {
+          throw error;
+        }
+        await track.applyConstraints(getOrientationConstraints(nextOrientation));
+      }
+      const settings = track.getSettings();
+      const actualAspectRatio = settings.aspectRatio ??
+        (settings.width && settings.height ? settings.width / settings.height : null);
+      const targetAspectRatio = nextOrientation === "portrait" ? 9 / 16 : 16 / 9;
+      if (actualAspectRatio && Math.abs(actualAspectRatio - targetAspectRatio) > 0.12) {
+        setCameraError(
+          `Your camera is providing a ${actualAspectRatio.toFixed(2)}:1 feed. The full camera image is shown without zoom or a fake background.`,
+        );
+      }
+    } catch {
+      setCameraError(`Your camera couldn't switch to ${nextOrientation} framing. The full original camera image is kept without zoom.`);
     }
   };
 
@@ -606,12 +658,7 @@ export default function TeleprompterStudio() {
                   <button
                     type="button"
                     className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "portrait" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                    onClick={() => {
-                      setOrientation("portrait");
-                      scrollPositionRef.current = 0;
-                      setCanvasReady(false);
-                      canvasHasFrameRef.current = false;
-                    }}
+                    onClick={() => void selectOrientation("portrait")}
                     aria-pressed={orientation === "portrait"}
                     disabled={recording || Boolean(recordedUrl)}
                   >
@@ -620,12 +667,7 @@ export default function TeleprompterStudio() {
                   <button
                     type="button"
                     className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "landscape" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                    onClick={() => {
-                      setOrientation("landscape");
-                      scrollPositionRef.current = 0;
-                      setCanvasReady(false);
-                      canvasHasFrameRef.current = false;
-                    }}
+                    onClick={() => void selectOrientation("landscape")}
                     aria-pressed={orientation === "landscape"}
                     disabled={recording || Boolean(recordedUrl)}
                   >
