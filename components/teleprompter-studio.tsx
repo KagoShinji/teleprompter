@@ -12,6 +12,7 @@ import {
   FlipHorizontal2,
   Maximize2,
   Mic,
+  Minimize2,
   Minus,
   Pause,
   Play,
@@ -19,11 +20,13 @@ import {
   RotateCcw,
   Settings2,
   SlidersHorizontal,
+  Smartphone,
   Sparkles,
   Square,
   Trash2,
   Video,
   X,
+  RectangleHorizontal,
 } from "lucide-react";
 import {
   type ChangeEvent,
@@ -63,10 +66,54 @@ function wrapScript(context: CanvasRenderingContext2D, script: string, width: nu
   });
 }
 
+type VideoOrientation = "portrait" | "landscape";
+
+function drawCameraFrame(
+  context: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  width: number,
+  height: number,
+  mirror: boolean,
+) {
+  const sourceAspect = video.videoWidth / video.videoHeight;
+  const targetAspect = width / height;
+  let sourceX = 0;
+  let sourceY = 0;
+  let sourceWidth = video.videoWidth;
+  let sourceHeight = video.videoHeight;
+
+  if (sourceAspect > targetAspect) {
+    sourceWidth = video.videoHeight * targetAspect;
+    sourceX = (video.videoWidth - sourceWidth) / 2;
+  } else {
+    sourceHeight = video.videoWidth / targetAspect;
+    sourceY = (video.videoHeight - sourceHeight) / 2;
+  }
+
+  context.save();
+  if (mirror) {
+    context.translate(width, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(
+    video,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    width,
+    height,
+  );
+  context.restore();
+}
+
 export default function TeleprompterStudio() {
   const [script, setScript] = useState(initialScript);
   const [fontSize, setFontSize] = useState(24);
   const [speed, setSpeed] = useState(1);
+  const [orientation, setOrientation] = useState<VideoOrientation>("portrait");
   const [mirror, setMirror] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -80,6 +127,8 @@ export default function TeleprompterStudio() {
   const [showSettings, setShowSettings] = useState(true);
   const [showScriptEditor, setShowScriptEditor] = useState(false);
   const [scriptActionMessage, setScriptActionMessage] = useState("");
+  const [fullscreenFallback, setFullscreenFallback] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const scriptInputRef = useRef<HTMLTextAreaElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -92,6 +141,16 @@ export default function TeleprompterStudio() {
   const animationRef = useRef<number | null>(null);
   const scrollPositionRef = useRef(0);
   const canvasHasFrameRef = useRef(false);
+
+  useEffect(() => {
+    const updateFullscreen = () => {
+      const active = document.fullscreenElement === stageRef.current;
+      setIsFullscreen(active || fullscreenFallback);
+      if (!active && fullscreenFallback) setFullscreenFallback(false);
+    };
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    return () => document.removeEventListener("fullscreenchange", updateFullscreen);
+  }, [fullscreenFallback]);
 
   useEffect(() => {
     return () => {
@@ -127,9 +186,8 @@ export default function TeleprompterStudio() {
       }
 
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
-        const scale = Math.min(1, 1280 / video.videoWidth, 1280 / video.videoHeight);
-        const width = Math.max(1, Math.round(video.videoWidth * scale));
-        const height = Math.max(1, Math.round(video.videoHeight * scale));
+        const width = orientation === "portrait" ? 720 : 1280;
+        const height = orientation === "portrait" ? 1280 : 720;
         if (canvas.width !== width || canvas.height !== height) {
           canvas.width = width;
           canvas.height = height;
@@ -137,15 +195,7 @@ export default function TeleprompterStudio() {
 
         context.fillStyle = "#171a17";
         context.fillRect(0, 0, width, height);
-        if (mirror) {
-          context.save();
-          context.translate(width, 0);
-          context.scale(-1, 1);
-          context.drawImage(video, 0, 0, width, height);
-          context.restore();
-        } else {
-          context.drawImage(video, 0, 0, width, height);
-        }
+        drawCameraFrame(context, video, width, height, mirror);
         if (!canvasHasFrameRef.current) {
           canvasHasFrameRef.current = true;
           setCanvasReady(true);
@@ -216,7 +266,7 @@ export default function TeleprompterStudio() {
       if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
     };
-  }, [fontSize, isPlaying, mirror, recordedUrl, script, speed, stream]);
+  }, [fontSize, isPlaying, mirror, orientation, recordedUrl, script, speed, stream]);
 
   useEffect(() => {
     return () => {
@@ -244,7 +294,6 @@ export default function TeleprompterStudio() {
       return;
     }
     try {
-      const isMobile = window.matchMedia("(max-width: 800px)").matches;
       setCameraReady(false);
       setCanvasReady(false);
       canvasHasFrameRef.current = false;
@@ -252,8 +301,8 @@ export default function TeleprompterStudio() {
         audio: true,
         video: {
           facingMode: { ideal: "user" },
-          width: { ideal: isMobile ? 720 : 1280 },
-          height: { ideal: isMobile ? 1280 : 720 },
+          width: { ideal: orientation === "portrait" ? 720 : 1280 },
+          height: { ideal: orientation === "portrait" ? 1280 : 720 },
           frameRate: { ideal: 30, max: 30 },
         },
       });
@@ -272,6 +321,7 @@ export default function TeleprompterStudio() {
 
   const startRecording = () => {
     if (!stream || !canvasReady) return;
+    setCameraError("");
     if (typeof MediaRecorder === "undefined") {
       setCameraError("Video recording is not supported in this browser. Try a recent version of Chrome, Safari, or Firefox.");
       return;
@@ -343,6 +393,33 @@ export default function TeleprompterStudio() {
     link.href = recordedUrl;
     link.download = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
     link.click();
+  };
+
+  const toggleFullscreen = async () => {
+    if (document.fullscreenElement === stageRef.current) {
+      await document.exitFullscreen();
+      return;
+    }
+
+    if (fullscreenFallback) {
+      setFullscreenFallback(false);
+      setIsFullscreen(false);
+      return;
+    }
+
+    if (stageRef.current?.requestFullscreen) {
+      try {
+        await stageRef.current.requestFullscreen();
+        return;
+      } catch {
+        setFullscreenFallback(true);
+        setIsFullscreen(true);
+        return;
+      }
+    }
+
+    setFullscreenFallback(true);
+    setIsFullscreen(true);
   };
 
   const changeFontSize = (change: number) => {
@@ -516,22 +593,57 @@ export default function TeleprompterStudio() {
               </div>
             </div>
 
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-semibold">
                 <span className="grid h-7 w-7 place-items-center rounded-lg bg-[#edf1e9] text-[#728367]"><span className="text-xs">02</span></span>
                 Camera preview
               </div>
-              <button
-                onClick={() => setMirror(!mirror)}
-                className={`flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition ${mirror ? "bg-[#edf1e9] text-[#526547]" : "text-muted-foreground hover:bg-[#f4f5f2]"}`}
-                aria-pressed={mirror}
-              >
-                <FlipHorizontal2 size={15} />
-                Mirror
-              </button>
+              <div className="flex items-center gap-1">
+                <div className="flex items-center rounded-lg bg-[#f4f5f2] p-0.5" role="group" aria-label="Video orientation">
+                  <button
+                    type="button"
+                    className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "portrait" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    onClick={() => {
+                      setOrientation("portrait");
+                      scrollPositionRef.current = 0;
+                      setCanvasReady(false);
+                      canvasHasFrameRef.current = false;
+                    }}
+                    aria-pressed={orientation === "portrait"}
+                    disabled={recording || Boolean(recordedUrl)}
+                  >
+                    <Smartphone size={14} /> Portrait
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "landscape" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    onClick={() => {
+                      setOrientation("landscape");
+                      scrollPositionRef.current = 0;
+                      setCanvasReady(false);
+                      canvasHasFrameRef.current = false;
+                    }}
+                    aria-pressed={orientation === "landscape"}
+                    disabled={recording || Boolean(recordedUrl)}
+                  >
+                    <RectangleHorizontal size={14} /> Landscape
+                  </button>
+                </div>
+                <button
+                  onClick={() => setMirror(!mirror)}
+                  className={`flex h-9 items-center gap-2 rounded-lg px-2 sm:px-3 text-xs font-medium transition ${mirror ? "bg-[#edf1e9] text-[#526547]" : "text-muted-foreground hover:bg-[#f4f5f2]"}`}
+                  aria-pressed={mirror}
+                >
+                  <FlipHorizontal2 size={15} />
+                  <span className="hidden sm:inline">Mirror</span>
+                </button>
+              </div>
             </div>
 
-            <div ref={stageRef} className="camera-stage">
+            <div
+              ref={stageRef}
+              className={`camera-stage orientation-${orientation}${fullscreenFallback ? " fallback-fullscreen" : ""}`}
+            >
               <video
                 ref={videoRef}
                 autoPlay
@@ -582,11 +694,51 @@ export default function TeleprompterStudio() {
               )}
               <button
                 className="absolute right-3 top-3 z-[3] grid h-9 w-9 place-items-center rounded-lg bg-black/35 text-white/90 backdrop-blur-sm transition hover:bg-black/55"
-                aria-label="Fullscreen preview"
-                onClick={() => stageRef.current?.requestFullscreen?.()}
+                aria-label={isFullscreen ? "Exit fullscreen preview" : "Fullscreen preview"}
+                onClick={() => void toggleFullscreen()}
               >
-                <Maximize2 size={16} />
+                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
               </button>
+              <div className="fullscreen-actions">
+                <span className="text-xs font-medium text-white/80">
+                  {recording ? `REC ${formatTime(elapsed)}` : `Ready · ${orientation}`}
+                </span>
+                <div className="flex items-center gap-2">
+                  {recording ? (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="h-10 bg-white/15 text-white hover:bg-white/25"
+                        onClick={() => setIsPlaying(!isPlaying)}
+                      >
+                        {isPlaying ? <Pause size={15} /> : <Play size={15} />}
+                        {isPlaying ? "Pause prompt" : "Resume prompt"}
+                      </Button>
+                      <Button variant="destructive" size="sm" className="h-10" onClick={stopRecording}>
+                        <Square size={13} fill="currentColor" /> Stop
+                      </Button>
+                    </>
+                  ) : recordedUrl ? (
+                    <Button size="sm" className="h-10" onClick={downloadRecording}>
+                      <ArrowDownToLine size={15} /> Save video
+                    </Button>
+                  ) : stream ? (
+                    <Button
+                      size="sm"
+                      className="h-10"
+                      onClick={startRecording}
+                      disabled={!canvasReady || !cameraReady}
+                    >
+                      <span className="h-2 w-2 rounded-full bg-[#f17a71]" /> Start recording
+                    </Button>
+                  ) : (
+                    <Button size="sm" className="h-10" onClick={openCamera}>
+                      <Video size={15} /> Enable camera
+                    </Button>
+                  )}
+                </div>
+              </div>
             </div>
 
             {cameraError && (

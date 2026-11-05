@@ -122,8 +122,6 @@ button {
 .camera-stage {
   position: relative;
   display: grid;
-  min-height: 220px;
-  aspect-ratio: 16 / 10;
   overflow: hidden;
   place-items: center;
   border-radius: 16px;
@@ -131,6 +129,17 @@ button {
     radial-gradient(ellipse at 50% 46%, rgb(73 78 67 / 45%), transparent 48%),
     linear-gradient(135deg, #343830, #1d201c 70%);
   color: #fff;
+}
+
+.camera-stage.orientation-portrait {
+  width: min(100%, 420px);
+  aspect-ratio: 9 / 16;
+  margin-inline: auto;
+}
+
+.camera-stage.orientation-landscape {
+  width: 100%;
+  aspect-ratio: 16 / 9;
 }
 
 .camera-stage canvas,
@@ -165,9 +174,62 @@ button {
   border-radius: 0;
 }
 
+.camera-stage.fallback-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
 .camera-stage:fullscreen canvas,
 .camera-stage:fullscreen video {
   object-fit: contain;
+}
+
+.camera-stage.fallback-fullscreen canvas,
+.camera-stage.fallback-fullscreen video {
+  object-fit: contain;
+}
+
+.fullscreen-actions {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  right: max(16px, env(safe-area-inset-right));
+  display: none;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  width: min(176px, calc(100vw - 32px));
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: rgb(15 17 15 / 68%);
+  padding: 10px 12px;
+  backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+}
+
+.fullscreen-actions > span {
+  align-self: flex-start;
+}
+
+.fullscreen-actions > div {
+  width: 100%;
+  flex-direction: column;
+}
+
+.fullscreen-actions > div > button {
+  width: 100%;
+  justify-content: center;
+}
+
+.camera-stage:fullscreen .fullscreen-actions,
+.camera-stage.fallback-fullscreen .fullscreen-actions {
+  display: flex;
 }
 
 .recording-pulse {
@@ -198,17 +260,9 @@ input[type="range"] {
     gap: 16px;
   }
 
-  .camera-stage {
-    aspect-ratio: 9 / 16;
-    max-height: 72dvh;
-  }
 }
 
 @media (max-width: 420px) {
-  .camera-stage {
-    min-height: 220px;
-  }
-
   .studio-header .header-secondary {
     display: none;
   }
