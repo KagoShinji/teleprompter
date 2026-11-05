@@ -75,37 +75,30 @@ function drawCameraFrame(
   height: number,
   mirror: boolean,
 ) {
-  const sourceAspect = video.videoWidth / video.videoHeight;
-  const targetAspect = width / height;
-  let sourceX = 0;
-  let sourceY = 0;
-  let sourceWidth = video.videoWidth;
-  let sourceHeight = video.videoHeight;
-
-  if (sourceAspect > targetAspect) {
-    sourceWidth = video.videoHeight * targetAspect;
-    sourceX = (video.videoWidth - sourceWidth) / 2;
-  } else {
-    sourceHeight = video.videoWidth / targetAspect;
-    sourceY = (video.videoHeight - sourceHeight) / 2;
-  }
-
+  const coverScale = Math.max(width / video.videoWidth, height / video.videoHeight);
+  const coverWidth = video.videoWidth * coverScale;
+  const coverHeight = video.videoHeight * coverScale;
+  const fitScale = Math.min(width / video.videoWidth, height / video.videoHeight);
+  const fitWidth = video.videoWidth * fitScale;
+  const fitHeight = video.videoHeight * fitScale;
   context.save();
   if (mirror) {
     context.translate(width, 0);
     context.scale(-1, 1);
   }
+
+  context.fillStyle = "#171a17";
+  context.fillRect(0, 0, width, height);
   context.drawImage(
     video,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
-    0,
-    0,
-    width,
-    height,
+    (width - coverWidth) / 2,
+    (height - coverHeight) / 2,
+    coverWidth,
+    coverHeight,
   );
+  context.fillStyle = "rgba(17, 20, 17, 0.58)";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(video, (width - fitWidth) / 2, (height - fitHeight) / 2, fitWidth, fitHeight);
   context.restore();
 }
 
@@ -132,6 +125,7 @@ export default function TeleprompterStudio() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scriptInputRef = useRef<HTMLTextAreaElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const recordingCanvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
@@ -172,11 +166,14 @@ export default function TeleprompterStudio() {
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
+    const recordingCanvas = recordingCanvasRef.current;
     const context = canvas?.getContext("2d", { alpha: false });
-    if (!stream || !video || !canvas || !context || recordedUrl) return;
+    const recordingContext = recordingCanvas?.getContext("2d", { alpha: false });
+    if (!stream || !video || !canvas || !context || !recordingCanvas || !recordingContext || recordedUrl) return;
 
     let previousFrame = performance.now();
     let cachedLayoutKey = "";
+    let cachedScript = "";
     let cachedLines: string[] = [];
     let cachedMaxScroll = 0;
     const renderFrame = (now: number) => {
@@ -192,10 +189,15 @@ export default function TeleprompterStudio() {
           canvas.width = width;
           canvas.height = height;
         }
+        if (recordingCanvas.width !== width || recordingCanvas.height !== height) {
+          recordingCanvas.width = width;
+          recordingCanvas.height = height;
+        }
 
+        drawCameraFrame(recordingContext, video, width, height, mirror);
         context.fillStyle = "#171a17";
         context.fillRect(0, 0, width, height);
-        drawCameraFrame(context, video, width, height, mirror);
+        context.drawImage(recordingCanvas, 0, 0, width, height);
         if (!canvasHasFrameRef.current) {
           canvasHasFrameRef.current = true;
           setCanvasReady(true);
@@ -227,7 +229,7 @@ export default function TeleprompterStudio() {
 
         context.font = `500 ${fontSizeOnCanvas}px Arial, sans-serif`;
         context.fillStyle = "#ffffff";
-        if (layoutKey !== cachedLayoutKey) {
+        if (layoutKey !== cachedLayoutKey || script !== cachedScript) {
           cachedLines = wrapScript(context, script || "Add your script to see it here.", textWidth);
           const contentTop = padding * 0.72 + headerHeight;
           const visibleHeight = Math.max(lineHeight, panelHeight - contentTop - padding * 0.7);
@@ -236,6 +238,7 @@ export default function TeleprompterStudio() {
             (cachedLines.length * lineHeight - visibleHeight) / canvasScale,
           );
           cachedLayoutKey = layoutKey;
+          cachedScript = script;
         }
         const contentTop = padding * 0.72 + headerHeight;
         const visibleHeight = Math.max(lineHeight, panelHeight - contentTop - padding * 0.7);
@@ -326,9 +329,9 @@ export default function TeleprompterStudio() {
       setCameraError("Video recording is not supported in this browser. Try a recent version of Chrome, Safari, or Firefox.");
       return;
     }
-    const canvas = canvasRef.current;
+    const canvas = recordingCanvasRef.current;
     if (!canvas || typeof canvas.captureStream !== "function") {
-      setCameraError("This browser can't record the camera preview. Try a recent version of Chrome, Safari, or Firefox.");
+      setCameraError("This browser can't record the camera. Try a recent version of Chrome, Safari, or Firefox.");
       return;
     }
     const mimeType = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/mp4"]
@@ -507,12 +510,12 @@ export default function TeleprompterStudio() {
 
             <div className="mb-4 rounded-xl bg-[#f5f6f3] px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="font-medium text-[#555b4f]">Prompt appears over your camera and in the saved video</span>
+                <span className="font-medium text-[#555b4f]">Prompt is for preview only; saved video is clean</span>
                 <span className="text-muted-foreground">{script.trim() ? script.trim().split(/\s+/).length : 0} words</span>
               </div>
               {showScriptEditor && (
                 <div className="mt-3">
-                  <div className="mb-2 flex items-center justify-end gap-2">
+                  <div className="script-editor-actions mb-2 flex items-center justify-end gap-2">
                     <Button
                       type="button"
                       variant="outline"
@@ -599,7 +602,7 @@ export default function TeleprompterStudio() {
                 Camera preview
               </div>
               <div className="flex items-center gap-1">
-                <div className="flex items-center rounded-lg bg-[#f4f5f2] p-0.5" role="group" aria-label="Video orientation">
+                <div className="camera-orientation-selector flex items-center rounded-lg bg-[#f4f5f2] p-0.5" role="group" aria-label="Video orientation">
                   <button
                     type="button"
                     className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "portrait" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
@@ -631,7 +634,7 @@ export default function TeleprompterStudio() {
                 </div>
                 <button
                   onClick={() => setMirror(!mirror)}
-                  className={`flex h-9 items-center gap-2 rounded-lg px-2 sm:px-3 text-xs font-medium transition ${mirror ? "bg-[#edf1e9] text-[#526547]" : "text-muted-foreground hover:bg-[#f4f5f2]"}`}
+                  className={`camera-mirror-button flex h-9 items-center gap-2 rounded-lg px-2 sm:px-3 text-xs font-medium transition ${mirror ? "bg-[#edf1e9] text-[#526547]" : "text-muted-foreground hover:bg-[#f4f5f2]"}`}
                   aria-pressed={mirror}
                 >
                   <FlipHorizontal2 size={15} />
@@ -660,13 +663,20 @@ export default function TeleprompterStudio() {
                   aria-label="Live camera preview with scrolling teleprompter"
                 />
               )}
+              {!recordedUrl && (
+                <canvas
+                  ref={recordingCanvasRef}
+                  className="camera-recording-source"
+                  aria-hidden="true"
+                />
+              )}
               {recordedUrl && !recording ? (
                 <video
                   src={recordedUrl}
                   controls
                   playsInline
                   className="recorded-video"
-                  aria-label="Recorded video with teleprompter"
+                  aria-label="Recorded video without teleprompter overlay"
                 />
               ) : null}
               {!stream && !recordedUrl && (
@@ -748,7 +758,7 @@ export default function TeleprompterStudio() {
               </div>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="camera-action-row mt-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Clock3 size={15} />
                 {formatTime(elapsed)}
@@ -871,7 +881,7 @@ export default function TeleprompterStudio() {
                   <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold text-[#50564a]">
                     <Mic size={14} /> Audio & video
                   </div>
-                  <p className="m-0 text-xs leading-5 text-muted-foreground">Camera, microphone, and the overlaid script stay on this device. Downloaded videos include the teleprompter.</p>
+                  <p className="m-0 text-xs leading-5 text-muted-foreground">The scrolling prompt is only on your preview. Your saved video contains the camera and microphone, without script text.</p>
                 </div>
               </div>
             ) : (
@@ -893,6 +903,86 @@ export default function TeleprompterStudio() {
           <span className="inline-flex items-center gap-1.5"><Clapperboard size={12} /> Made for the moments that matter</span>
         </footer>
       </main>
+      {!isFullscreen && (
+        <div className="mobile-recording-dock" role="group" aria-label="Mobile recording controls">
+          <div className="mobile-dock-status">
+            {recording ? (
+              <>
+                <span className="recording-pulse h-2 w-2 rounded-full bg-[#e16a61]" />
+                <span>{formatTime(elapsed)}</span>
+              </>
+            ) : recordedUrl ? (
+              <>
+                <Check size={15} />
+                <span>Take ready</span>
+              </>
+            ) : (
+              <>
+                <Video size={15} />
+                <span>{stream ? "Camera ready" : "Ready to record"}</span>
+              </>
+            )}
+          </div>
+          <div className="mobile-dock-actions">
+            {recording ? (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-12 flex-1"
+                  onClick={() => setIsPlaying(!isPlaying)}
+                >
+                  {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+                  {isPlaying ? "Pause prompt" : "Resume prompt"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="min-h-12 flex-1"
+                  onClick={stopRecording}
+                >
+                  <Square size={14} fill="currentColor" />
+                  Stop
+                </Button>
+              </>
+            ) : recordedUrl ? (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-12 flex-1"
+                  onClick={() => {
+                    setRecordedUrl(null);
+                    setRecordedMimeType("");
+                    setElapsed(0);
+                    setCanvasReady(false);
+                    canvasHasFrameRef.current = false;
+                  }}
+                >
+                  <RotateCcw size={15} /> Retake
+                </Button>
+                <Button type="button" className="min-h-12 flex-1" onClick={downloadRecording}>
+                  <ArrowDownToLine size={16} /> Save video
+                </Button>
+              </>
+            ) : stream ? (
+              <Button
+                type="button"
+                className="min-h-12 w-full"
+                onClick={startRecording}
+                disabled={!canvasReady || !cameraReady}
+              >
+                <span className="h-2.5 w-2.5 rounded-full bg-[#f17a71]" />
+                {canvasReady && cameraReady ? "Start recording" : "Preparing camera…"}
+              </Button>
+            ) : (
+              <Button type="button" className="min-h-12 w-full" onClick={openCamera}>
+                <Video size={16} /> Enable camera
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -75,6 +75,10 @@ button {
   min-height: 100vh;
 }
 
+.mobile-recording-dock {
+  display: none;
+}
+
 .studio-header {
   position: sticky;
   top: 0;
@@ -159,6 +163,16 @@ button {
 }
 
 .camera-stage .camera-composite {
+  pointer-events: none;
+}
+
+.camera-stage .camera-recording-source {
+  position: fixed;
+  top: -2px;
+  left: -2px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
   pointer-events: none;
 }
 
@@ -252,7 +266,7 @@ input[type="range"] {
 
   .studio-main {
     width: min(100% - 28px, 620px);
-    padding: 26px 0 40px;
+    padding: 26px 0 calc(120px + env(safe-area-inset-bottom));
   }
 
   .studio-grid {
@@ -260,10 +274,91 @@ input[type="range"] {
     gap: 16px;
   }
 
+  .mobile-recording-dock {
+    position: fixed;
+    z-index: 30;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-top: 1px solid rgb(226 228 222 / 90%);
+    background: rgb(255 255 255 / 94%);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 24px rgb(34 35 31 / 8%);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-dock-status {
+    display: flex;
+    min-width: max-content;
+    align-items: center;
+    gap: 7px;
+    color: #656a60;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .mobile-dock-actions {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .mobile-dock-actions > button {
+    min-width: 0;
+    padding-inline: 12px;
+  }
+
+  .mobile-dock-actions > button > svg {
+    flex: 0 0 auto;
+  }
+
+  .camera-action-row {
+    display: none;
+  }
+
+  .camera-orientation-selector button,
+  .camera-mirror-button {
+    min-height: 44px;
+  }
+
+  .script-editor-actions button {
+    min-height: 40px;
+  }
+
+  input[type="range"] {
+    min-height: 40px;
+  }
+
 }
 
 @media (max-width: 420px) {
   .studio-header .header-secondary {
     display: none;
+  }
+
+  .mobile-recording-dock {
+    gap: 8px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .mobile-dock-status {
+    font-size: 11px;
+  }
+
+  .mobile-dock-actions {
+    gap: 6px;
+  }
+
+  .mobile-dock-actions > button {
+    gap: 6px;
+    padding-inline: 9px;
+    font-size: 12px;
   }
 }
