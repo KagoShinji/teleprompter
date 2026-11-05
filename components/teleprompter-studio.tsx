@@ -166,7 +166,9 @@ export default function TeleprompterStudio() {
   const [elapsed, setElapsed] = useState(0);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [recordedMimeType, setRecordedMimeType] = useState("");
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [cameraError, setCameraError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
   const [cameraAspectRatio, setCameraAspectRatio] = useState<number | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
@@ -405,6 +407,7 @@ export default function TeleprompterStudio() {
         const blob = new Blob(chunksRef.current, {
           type: recorder.mimeType || "video/webm",
         });
+        setRecordedBlob(blob);
         setRecordedUrl((previousUrl) => {
           if (previousUrl) URL.revokeObjectURL(previousUrl);
           return URL.createObjectURL(blob);
@@ -423,6 +426,8 @@ export default function TeleprompterStudio() {
       setRecording(true);
       setIsPlaying(true);
       setRecordedUrl(null);
+      setRecordedBlob(null);
+      setSaveMessage("");
     } catch {
       setCameraError("Your browser couldn't start recording. Try closing other camera apps and retry.");
     }
@@ -434,13 +439,35 @@ export default function TeleprompterStudio() {
     setIsPlaying(false);
   };
 
-  const downloadRecording = () => {
-    if (!recordedUrl) return;
+  const saveRecording = async () => {
+    if (!recordedUrl || !recordedBlob) return;
+    setCameraError("");
+    setSaveMessage("");
     const extension = recordedMimeType.includes("mp4") ? "mp4" : "webm";
+    const filename = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
+    const file = new File([recordedBlob], filename, {
+      type: recordedMimeType || recordedBlob.type || "video/webm",
+    });
+
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: filename });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setCameraError("The video could not be shared. Please try saving it again.");
+      }
+      return;
+    }
+
     const link = document.createElement("a");
     link.href = recordedUrl;
-    link.download = `cue-recording-${new Date().toISOString().slice(0, 10)}.${extension}`;
+    link.download = filename;
+    document.body.appendChild(link);
     link.click();
+    link.remove();
+    setSaveMessage(
+      "This browser cannot save directly to your camera roll. The video was downloaded; open it from Downloads or Files and choose Save to Photos.",
+    );
   };
 
   const toggleFullscreen = async () => {
@@ -769,7 +796,7 @@ export default function TeleprompterStudio() {
                       </Button>
                     </>
                   ) : recordedUrl ? (
-                    <Button size="sm" className="h-10" onClick={downloadRecording}>
+                    <Button size="sm" className="h-10" onClick={saveRecording}>
                       <ArrowDownToLine size={15} /> Save video
                     </Button>
                   ) : stream ? (
@@ -796,6 +823,11 @@ export default function TeleprompterStudio() {
                 {cameraError}
               </div>
             )}
+            {saveMessage && (
+              <p role="status" className="mt-3 rounded-xl border border-[#e9ebe5] bg-[#f7f8f5] px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+                {saveMessage}
+              </p>
+            )}
 
             <div className="camera-action-row mt-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -819,14 +851,16 @@ export default function TeleprompterStudio() {
                   <>
                     <Button variant="secondary" className="flex-1 sm:flex-none" onClick={() => {
                       setRecordedUrl(null);
+                      setRecordedBlob(null);
                       setRecordedMimeType("");
+                      setSaveMessage("");
                       setElapsed(0);
                       setCanvasReady(false);
                       canvasHasFrameRef.current = false;
                     }}>
                       <RotateCcw size={15} /> Retake
                     </Button>
-                    <Button className="flex-1 sm:flex-none" onClick={downloadRecording}>
+                    <Button className="flex-1 sm:flex-none" onClick={saveRecording}>
                       <ArrowDownToLine size={16} /> Save video
                     </Button>
                   </>
@@ -992,7 +1026,9 @@ export default function TeleprompterStudio() {
                   className="min-h-12 flex-1"
                   onClick={() => {
                     setRecordedUrl(null);
+                    setRecordedBlob(null);
                     setRecordedMimeType("");
+                    setSaveMessage("");
                     setElapsed(0);
                     setCanvasReady(false);
                     canvasHasFrameRef.current = false;
@@ -1000,7 +1036,7 @@ export default function TeleprompterStudio() {
                 >
                   <RotateCcw size={15} /> Retake
                 </Button>
-                <Button type="button" className="min-h-12 flex-1" onClick={downloadRecording}>
+                <Button type="button" className="min-h-12 flex-1" onClick={saveRecording}>
                   <ArrowDownToLine size={16} /> Save video
                 </Button>
               </>
