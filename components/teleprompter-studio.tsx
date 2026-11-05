@@ -67,6 +67,77 @@ function wrapScript(context: CanvasRenderingContext2D, script: string, width: nu
 }
 
 type VideoOrientation = "portrait" | "landscape";
+type PromptLayout = {
+  key: string;
+  lines: string[];
+  maxScroll: number;
+};
+
+function drawTeleprompterOverlay(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  script: string,
+  fontSize: number,
+  scrollPosition: number,
+  stageWidth: number,
+  isPlaying: boolean,
+  speed: number,
+  deltaSeconds: number,
+  layout: PromptLayout,
+) {
+  const padding = stageWidth * 0.045;
+  const canvasScale = width / stageWidth;
+  const paddingOnCanvas = padding * canvasScale;
+  const panelHeight = height * 0.31;
+  const fontSizeOnCanvas = fontSize * canvasScale;
+  const lineHeight = fontSizeOnCanvas * 1.42;
+  const headerSize = 11 * canvasScale;
+  const headerHeight = 19 * canvasScale;
+  const textWidth = width - paddingOnCanvas * 2;
+
+  context.clearRect(0, 0, width, height);
+  context.save();
+  const gradient = context.createLinearGradient(0, 0, 0, panelHeight);
+  gradient.addColorStop(0, "rgba(14, 17, 15, 0.91)");
+  gradient.addColorStop(0.82, "rgba(14, 17, 15, 0.76)");
+  gradient.addColorStop(1, "rgba(14, 17, 15, 0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, panelHeight);
+
+  context.font = `600 ${headerSize}px Arial, sans-serif`;
+  context.fillStyle = "rgba(236, 241, 230, 0.78)";
+  context.textBaseline = "top";
+  context.fillText("READ ALONG", paddingOnCanvas, paddingOnCanvas * 0.72);
+
+  context.font = `500 ${fontSizeOnCanvas}px Arial, sans-serif`;
+  context.fillStyle = "#ffffff";
+  const contentTop = paddingOnCanvas * 0.72 + headerHeight;
+  const visibleHeight = Math.max(lineHeight, panelHeight - contentTop - paddingOnCanvas * 0.7);
+  const layoutKey = `${width}:${height}:${stageWidth}:${fontSize}:${script}`;
+  if (layout.key !== layoutKey) {
+    layout.lines = wrapScript(context, script || "Add your script to see it here.", textWidth);
+    layout.maxScroll = Math.max(
+      0,
+      (layout.lines.length * lineHeight - visibleHeight) / canvasScale,
+    );
+    layout.key = layoutKey;
+  }
+  const nextScroll = isPlaying
+    ? Math.min(layout.maxScroll, scrollPosition + deltaSeconds * speed * 18)
+    : scrollPosition;
+
+  context.beginPath();
+  context.rect(paddingOnCanvas, contentTop, textWidth, visibleHeight);
+  context.clip();
+  layout.lines.forEach((line, index) => {
+    const y = contentTop + index * lineHeight - nextScroll * canvasScale;
+    context.fillText(line, paddingOnCanvas, y);
+  });
+  context.restore();
+
+  return nextScroll;
+}
 
 function getOrientationConstraints(
   orientation: VideoOrientation,
@@ -75,34 +146,12 @@ function getOrientationConstraints(
   const portrait = orientation === "portrait";
   const aspectRatio = portrait ? 9 / 16 : 16 / 9;
   return {
-    facingMode: { ideal: "user" },
+    facingMode: { ideal: "user" as const },
     width: { ideal: portrait ? 720 : 1280 },
     height: { ideal: portrait ? 1280 : 720 },
     aspectRatio: requireAspectRatio ? { exact: aspectRatio } : { ideal: aspectRatio },
     frameRate: { ideal: 30, max: 30 },
   };
-}
-
-function drawCameraFrame(
-  context: CanvasRenderingContext2D,
-  video: HTMLVideoElement,
-  width: number,
-  height: number,
-  mirror: boolean,
-) {
-  const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
-  const drawWidth = video.videoWidth * scale;
-  const drawHeight = video.videoHeight * scale;
-  context.save();
-  if (mirror) {
-    context.translate(width, 0);
-    context.scale(-1, 1);
-  }
-
-  context.fillStyle = "#171a17";
-  context.fillRect(0, 0, width, height);
-  context.drawImage(video, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  context.restore();
 }
 
 export default function TeleprompterStudio() {
@@ -128,16 +177,15 @@ export default function TeleprompterStudio() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scriptInputRef = useRef<HTMLTextAreaElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const recordingCanvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordingStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const recordingStartedAt = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const animationRef = useRef<number | null>(null);
   const scrollPositionRef = useRef(0);
   const canvasHasFrameRef = useRef(false);
+  const promptLayoutRef = useRef<PromptLayout>({ key: "", lines: [], maxScroll: 0 });
 
   useEffect(() => {
     const updateFullscreen = () => {
@@ -152,7 +200,6 @@ export default function TeleprompterStudio() {
   useEffect(() => {
     return () => {
       stream?.getTracks().forEach((track) => track.stop());
-      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
       if (timerRef.current !== null) window.clearInterval(timerRef.current);
       if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
     };
@@ -169,16 +216,10 @@ export default function TeleprompterStudio() {
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const recordingCanvas = recordingCanvasRef.current;
-    const context = canvas?.getContext("2d", { alpha: false });
-    const recordingContext = recordingCanvas?.getContext("2d", { alpha: false });
-    if (!stream || !video || !canvas || !context || !recordingCanvas || !recordingContext || recordedUrl) return;
+    const context = canvas?.getContext("2d");
+    if (!stream || !video || !canvas || !context || recordedUrl) return;
 
     let previousFrame = performance.now();
-    let cachedLayoutKey = "";
-    let cachedScript = "";
-    let cachedLines: string[] = [];
-    let cachedMaxScroll = 0;
     const renderFrame = (now: number) => {
       if (now - previousFrame < 1000 / 30) {
         animationRef.current = window.requestAnimationFrame(renderFrame);
@@ -186,81 +227,38 @@ export default function TeleprompterStudio() {
       }
 
       if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth && video.videoHeight) {
-        const width = orientation === "portrait" ? 720 : 1280;
-        const height = orientation === "portrait" ? 1280 : 720;
+        const scale = Math.min(1, 1280 / video.videoWidth, 1280 / video.videoHeight);
+        const width = Math.max(1, Math.round(video.videoWidth * scale));
+        const height = Math.max(1, Math.round(video.videoHeight * scale));
         if (canvas.width !== width || canvas.height !== height) {
           canvas.width = width;
           canvas.height = height;
         }
-        if (recordingCanvas.width !== width || recordingCanvas.height !== height) {
-          recordingCanvas.width = width;
-          recordingCanvas.height = height;
-        }
 
-        drawCameraFrame(recordingContext, video, width, height, mirror);
-        context.fillStyle = "#171a17";
-        context.fillRect(0, 0, width, height);
-        context.drawImage(recordingCanvas, 0, 0, width, height);
         if (!canvasHasFrameRef.current) {
           canvasHasFrameRef.current = true;
           setCanvasReady(true);
         }
 
-        const stageWidth = Math.max(stageRef.current?.getBoundingClientRect().width ?? 0, 320);
-        const canvasScale = width / stageWidth;
-        const padding = stageWidth * 0.045 * canvasScale;
-        const panelHeight = height * 0.31;
-        const fontSizeOnCanvas = fontSize * canvasScale;
-        const lineHeight = fontSizeOnCanvas * 1.42;
-        const headerSize = 11 * canvasScale;
-        const headerHeight = 19 * canvasScale;
-        const textWidth = width - padding * 2;
-        const layoutKey = `${width}:${stageWidth}:${fontSize}`;
-
-        context.save();
-        const gradient = context.createLinearGradient(0, 0, 0, panelHeight);
-        gradient.addColorStop(0, "rgba(14, 17, 15, 0.91)");
-        gradient.addColorStop(0.82, "rgba(14, 17, 15, 0.76)");
-        gradient.addColorStop(1, "rgba(14, 17, 15, 0)");
-        context.fillStyle = gradient;
-        context.fillRect(0, 0, width, panelHeight);
-
-        context.font = `600 ${headerSize}px Arial, sans-serif`;
-        context.fillStyle = "rgba(236, 241, 230, 0.78)";
-        context.textBaseline = "top";
-        context.fillText("READ ALONG", padding, padding * 0.72);
-
-        context.font = `500 ${fontSizeOnCanvas}px Arial, sans-serif`;
-        context.fillStyle = "#ffffff";
-        if (layoutKey !== cachedLayoutKey || script !== cachedScript) {
-          cachedLines = wrapScript(context, script || "Add your script to see it here.", textWidth);
-          const contentTop = padding * 0.72 + headerHeight;
-          const visibleHeight = Math.max(lineHeight, panelHeight - contentTop - padding * 0.7);
-          cachedMaxScroll = Math.max(
-            0,
-            (cachedLines.length * lineHeight - visibleHeight) / canvasScale,
-          );
-          cachedLayoutKey = layoutKey;
-          cachedScript = script;
-        }
-        const contentTop = padding * 0.72 + headerHeight;
-        const visibleHeight = Math.max(lineHeight, panelHeight - contentTop - padding * 0.7);
         const deltaSeconds = Math.min((now - previousFrame) / 1000, 0.05);
-        if (isPlaying) {
-          scrollPositionRef.current = Math.min(
-            cachedMaxScroll,
-            scrollPositionRef.current + deltaSeconds * speed * 18,
-          );
-        }
-
-        context.beginPath();
-        context.rect(padding, contentTop, textWidth, visibleHeight);
-        context.clip();
-        cachedLines.forEach((line, index) => {
-          const y = contentTop + index * lineHeight - scrollPositionRef.current * canvasScale;
-          context.fillText(line, padding, y);
-        });
-        context.restore();
+        const stage = stageRef.current?.getBoundingClientRect();
+        const stageWidth = Math.max(stage?.width ?? 0, 1);
+        const stageHeight = Math.max(stage?.height ?? 0, 1);
+        const sourceAspect = video.videoWidth / video.videoHeight;
+        const displayedWidth = Math.min(stageWidth, stageHeight * sourceAspect);
+        scrollPositionRef.current = drawTeleprompterOverlay(
+          context,
+          width,
+          height,
+          script,
+          fontSize,
+          scrollPositionRef.current,
+          displayedWidth,
+          isPlaying,
+          speed,
+          deltaSeconds,
+          promptLayoutRef.current,
+        );
       }
 
       previousFrame = now;
@@ -272,7 +270,7 @@ export default function TeleprompterStudio() {
       if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
     };
-  }, [fontSize, isPlaying, mirror, orientation, recordedUrl, script, speed, stream]);
+  }, [fontSize, isPlaying, recordedUrl, script, speed, stream]);
 
   useEffect(() => {
     return () => {
@@ -381,25 +379,15 @@ export default function TeleprompterStudio() {
       setCameraError("Video recording is not supported in this browser. Try a recent version of Chrome, Safari, or Firefox.");
       return;
     }
-    const canvas = recordingCanvasRef.current;
-    if (!canvas || typeof canvas.captureStream !== "function") {
-      setCameraError("This browser can't record the camera. Try a recent version of Chrome, Safari, or Firefox.");
-      return;
-    }
     const mimeType = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/mp4"]
       .find((type) => MediaRecorder.isTypeSupported(type));
-    const recordingStream = canvas.captureStream(30);
-    stream.getAudioTracks().forEach((track) => recordingStream.addTrack(track));
     try {
-      const recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
-      recordingStreamRef.current = recordingStream;
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       chunksRef.current = [];
       recorder.ondataavailable = (event) => {
         if (event.data.size) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
-        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
-        recordingStreamRef.current = null;
         if (!chunksRef.current.length) {
           setCameraError("No video data was captured. Please try recording again.");
           return;
@@ -417,8 +405,6 @@ export default function TeleprompterStudio() {
       recorder.onerror = () => {
         setCameraError("Recording stopped unexpectedly. Please check your device and try again.");
         setRecording(false);
-        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
-        recordingStreamRef.current = null;
       };
       recorderRef.current = recorder;
       recordingStartedAt.current = Date.now();
@@ -429,8 +415,6 @@ export default function TeleprompterStudio() {
       setIsPlaying(true);
       setRecordedUrl(null);
     } catch {
-      recordingStream.getTracks().forEach((track) => track.stop());
-      recordingStreamRef.current = null;
       setCameraError("Your browser couldn't start recording. Try closing other camera apps and retry.");
     }
   };
@@ -654,7 +638,7 @@ export default function TeleprompterStudio() {
                 Camera preview
               </div>
               <div className="flex items-center gap-1">
-                <div className="camera-orientation-selector flex items-center rounded-lg bg-[#f4f5f2] p-0.5" role="group" aria-label="Video orientation">
+                <div className="camera-orientation-selector flex items-center rounded-lg bg-[#f4f5f2] p-0.5" role="group" aria-label="Request camera orientation">
                   <button
                     type="button"
                     className={`flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition ${orientation === "portrait" ? "bg-white text-[#34382f] shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
@@ -694,7 +678,7 @@ export default function TeleprompterStudio() {
                 autoPlay
                 muted
                 playsInline
-                className="camera-source"
+                className={`camera-live-video${mirror ? " mirrored" : ""}`}
                 aria-hidden="true"
                 onLoadedMetadata={() => setCameraReady(true)}
               />
@@ -703,13 +687,6 @@ export default function TeleprompterStudio() {
                   ref={canvasRef}
                   className="camera-composite"
                   aria-label="Live camera preview with scrolling teleprompter"
-                />
-              )}
-              {!recordedUrl && (
-                <canvas
-                  ref={recordingCanvasRef}
-                  className="camera-recording-source"
-                  aria-hidden="true"
                 />
               )}
               {recordedUrl && !recording ? (

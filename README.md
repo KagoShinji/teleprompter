@@ -15,9 +15,9 @@ Open `http://localhost:3000`. Camera and microphone access works on localhost an
 
 - Responsive layout designed for phone and desktop screens
 - Edit-in-place teleprompter with adjustable text size and scroll speed
-- Portrait (9:16) and landscape (16:9) camera framing with matching video output
-- The live preview includes the teleprompter, while saved recordings use a separate clean camera feed without prompt text
-- Portrait capture requests a native portrait camera aspect ratio and preserves the full source image if the device cannot provide it
+- Portrait and landscape camera orientation requests; the device's actual camera aspect ratio and full frame are preserved
+- The live preview adds a teleprompter overlay, while saved recordings record the original camera/microphone stream directly without prompt text or canvas re-encoding
+- If a device/browser cannot provide the requested orientation, the preview fits the original camera frame without zoom or crop and shows a warning
 - Live camera preview, front-camera mirror, fullscreen recording controls, recording timer, retake, and local download
 - A persistent mobile recording dock keeps camera and take controls reachable while scrolling
 - Media is captured by the browser and is not uploaded by this app
